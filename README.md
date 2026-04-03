@@ -5,6 +5,24 @@
 项目地址：
 - GitHub: [sx-ui2/sx-ui](https://github.com/sx-ui2/sx-ui)
 
+## 项目特点
+
+- 双核心架构：同时支持 `xray` 与 `sing-box`，面板首页可查看两套核心状态与版本。
+- `sing-box` 深度接入：支持在面板内切换 `sing-box` 版本，并使用自管理的 `stats` 版内核保证流量统计可用。
+- 更完整的协议覆盖：除了常见的 `vmess / vless / trojan / shadowsocks`，还接入了 `naive / tuic / hysteria2 / anytls`。
+- 入站管理更细：支持多用户、流量限制、到期时间、定时流量重置、手动流量重置、分享链接和二维码。
+- 增加多节点组合订阅功能，支持 `V2rayN / Mihomo / Sing-box` 等多客户端的订阅链接。
+- 分流规则可视化：支持按优先级管理分流规则，并可直接在面板里拖拽调整顺序。
+- 出站能力更强：支持 `IPv4 / IPv6 / WARP / Psiphon / Reject` 等策略，并可把出站策略绑定到单个入站或单条分流规则。
+- WARP 集成更贴近日常使用：支持普通账户和 Teams 团队账户，面板可直接生成配置并维护默认端点。
+- Psiphon赛风VPN（30个国家）集成：Psiphon-Socks5多地区Psiphon代理模式。
+- Argo 隧道内置：支持 `WS` 入站的临时隧道和固定隧道，节点关闭、删除或停用时会同步清理隧道。
+- 防火墙联动：面板支持查看规则、去重展示，并能在节点级别自动放行或关闭端口。
+- 面板证书体系完整：支持 ACME 账户、DNS 账户、证书申请、上传已有证书、自动续期和一键应用到面板。
+- 面板自带备份恢复：支持下载数据库备份、上传恢复、自动重启面板、查看运行日志。
+- 增加网站、数据库、Docker、文件管理等高级功能，支持自动配置Nginx 反代与 SNI 分流等能力。
+- 安装和管理脚本更完善：支持安装后自动开机自启、自动放行面板端口、显示 `xray / sing-box` 状态、纯 IPv6 VPS 的 NAT64/DNS64 处理，以及常用运维入口。
+
 ## 安装
 
 推荐直接使用安装脚本：
@@ -30,22 +48,71 @@ bash <(curl -Ls https://raw.githubusercontent.com/sx-ui2/sx-ui/main/install.sh)
 ```bash
 sx-ui
 ```
+## 手动安装 / 升级
 
-## 项目特点
+1. 从 [Releases](https://github.com/sx-ui2/sx-ui/releases) 下载对应架构压缩包  
+2. 上传到服务器后执行：
 
-- 双核心架构：同时支持 `xray` 与 `sing-box`，面板首页可查看两套核心状态与版本。
-- `sing-box` 深度接入：支持在面板内切换 `sing-box` 版本，并使用自管理的 `stats` 版内核保证流量统计可用。
-- 更完整的协议覆盖：除了常见的 `vmess / vless / trojan / shadowsocks`，还接入了 `naive / tuic / hysteria2 / anytls`。
-- 入站管理更细：支持多用户、流量限制、到期时间、定时流量重置、手动流量重置、分享链接和二维码。
-- 分流规则可视化：支持按优先级管理分流规则，并可直接在面板里拖拽调整顺序。
-- 出站能力更强：支持 `IPv4 / IPv6 / WARP / Psiphon / Reject` 等策略，并可把出站策略绑定到单个入站或单条分流规则。
-- WARP 集成更贴近日常使用：支持普通账户和 Teams 团队账户，面板可直接生成配置并维护默认端点。
-- Argo 隧道内置：支持 `WS` 入站的临时隧道和固定隧道，节点关闭、删除或停用时会同步清理隧道。
-- 防火墙联动：面板支持查看规则、去重展示，并能在节点级别自动放行或关闭端口。
-- 面板证书体系完整：支持 ACME 账户、DNS 账户、证书申请、上传已有证书、自签证书、自动续期和一键应用到面板。
-- 面板自带备份恢复：支持下载数据库备份、上传恢复、自动重启面板、查看运行日志。
-- 安装和管理脚本更完善：支持安装后自动开机自启、自动放行面板端口、显示 `xray / sing-box` 状态、纯 IPv6 VPS 的 NAT64/DNS64 处理，以及常用运维入口。
+```bash
+cd /root/
+rm -rf /usr/local/sx-ui /usr/bin/sx-ui
+tar zxf sx-ui-linux-amd64.tar.gz
+chmod +x sx-ui/sx-ui sx-ui/bin/xray-linux-* sx-ui/bin/sing-box-linux-* sx-ui/sx-ui.sh
+cp sx-ui/sx-ui.sh /usr/bin/sx-ui
+cp -f sx-ui/sx-ui.service /etc/systemd/system/
+mv sx-ui /usr/local/
+systemctl daemon-reload
+systemctl enable sx-ui
+systemctl restart sx-ui
+```
 
+说明：
+- `amd64` 请按实际架构替换为对应版本
+- 官方 release 当前主要提供 Linux `amd64 / arm64`
+
+## Release 包内容
+
+标准 release 包会包含：
+
+- `sx-ui` 主程序
+- 管理脚本 `sx-ui.sh`
+- `xray` Linux 内核
+- 自管理的 `sing-box stats` Linux 内核
+- `geoip.dat`
+- `geosite.dat`
+
+这意味着安装后的面板默认就是：
+
+- `xray` 可用
+- `sing-box` 可用
+- `sing-box` 流量统计可用
+
+## 管理脚本
+
+安装完成后，管理脚本命令为：
+
+```bash
+sx-ui
+```
+
+常用命令包括：
+
+- `sx-ui start`
+- `sx-ui stop`
+- `sx-ui restart`
+- `sx-ui status`
+- `sx-ui log`
+- `sx-ui update`
+- `sx-ui uninstall`
+
+管理脚本菜单内还提供：
+
+- 修改面板用户名密码
+- 修改端口
+- 修改根路径
+- 重置面板设置
+- 设置 / 取消开机自启
+- 管理 BBR / 网络加速
 ## 支持的核心与协议
 
 ### 核心
@@ -115,7 +182,7 @@ sx-ui
 - 默认出站策略切换
 - `IPv4 / IPv6 / WARP / Psiphon / Reject`
 - WARP 普通账户与 Teams 账户
-- 纯 IPv6 VPS 下的默认 WARP IPv6 端点处理
+- Psiphon赛风VPN（30个国家）集成：Psiphon-Socks5多地区Psiphon代理模式。
 
 ### 4. 分流规则
 
@@ -129,6 +196,8 @@ sx-ui
 - 查看当前规则
 - 规则去重与合并展示
 - 节点联动自动放行/关闭端口
+- 防火墙补全 IPv6 规则展示、双栈/单栈规则新增与 UFW IPv6 转发管理。
+- 网络类型标签调整为 IPv4、IPv6、IPv4/IPv6 三种颜色，双栈规则更易分辨。
 
 ### 6. 证书管理
 
@@ -148,71 +217,13 @@ sx-ui
 - 上传恢复
 - 查看运行日志
 
-## 手动安装 / 升级
+### 8. 高级功能
 
-1. 从 [Releases](https://github.com/sx-ui2/sx-ui/releases) 下载对应架构压缩包  
-2. 上传到服务器后执行：
-
-```bash
-cd /root/
-rm -rf /usr/local/sx-ui /usr/bin/sx-ui
-tar zxf sx-ui-linux-amd64.tar.gz
-chmod +x sx-ui/sx-ui sx-ui/bin/xray-linux-* sx-ui/bin/sing-box-linux-* sx-ui/sx-ui.sh
-cp sx-ui/sx-ui.sh /usr/bin/sx-ui
-cp -f sx-ui/sx-ui.service /etc/systemd/system/
-mv sx-ui /usr/local/
-systemctl daemon-reload
-systemctl enable sx-ui
-systemctl restart sx-ui
-```
-
-说明：
-- `amd64` 请按实际架构替换为对应版本
-- 官方 release 当前主要提供 Linux `amd64 / arm64`
-
-## Release 包内容
-
-标准 release 包会包含：
-
-- `sx-ui` 主程序
-- 管理脚本 `sx-ui.sh`
-- `xray` Linux 内核
-- 自管理的 `sing-box stats` Linux 内核
-- `geoip.dat`
-- `geosite.dat`
-
-这意味着安装后的面板默认就是：
-
-- `xray` 可用
-- `sing-box` 可用
-- `sing-box` 流量统计可用
-
-## 管理脚本
-
-安装完成后，管理脚本命令为：
-
-```bash
-sx-ui
-```
-
-常用命令包括：
-
-- `sx-ui start`
-- `sx-ui stop`
-- `sx-ui restart`
-- `sx-ui status`
-- `sx-ui log`
-- `sx-ui update`
-- `sx-ui uninstall`
-
-管理脚本菜单内还提供：
-
-- 修改面板用户名密码
-- 修改端口
-- 修改根路径
-- 重置面板设置
-- 设置 / 取消开机自启
-- 管理 BBR / 网络加速
+- 伪装网站功能和Docker管理功能，开启后解锁。
+- 网站管理：可以搭建PHP网站的完整网站管理工具。
+- 数据库管理：Mysql数据库管理工具
+- 文件管理：像本地操作一样的文件管理功能，文件上传、文件拖拽上传、右键菜单等能力。
+- Docker: docker容器管理工具。
 
 ## 数据目录
 
@@ -264,16 +275,4 @@ sx-ui
 - Debian 8+
 - CentOS 7+
 
-## 开发
-
-本地常用验证命令：
-
-```bash
-go test ./...
-bash -n install.sh
-bash -n sx-ui.sh
-```
-
-## 许可证
-
-本项目使用 [LICENSE](LICENSE) 中定义的许可证。
+## 声明：所有代码来源于Github参考项目与ChatGPT的整合，参考项目[vaxilu](https://github.com/vaxilu/x-ui)，[MHSanaei](https://github.com/MHSanaei/3x-ui)，[yonggekkk](https://github.com/yonggekkk/x-ui-yg/tree/main)，[1panel-dev(https://github.com/1panel-dev/1panel)，[qichiyuhub](https://github.com/qichiyuhub/rule/tree/main)二进制文件未开源，介意者请勿安装使用
