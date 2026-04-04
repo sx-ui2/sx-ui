@@ -277,3 +277,6 @@ sx-ui
 - CentOS 7+
 
 ## 声明：所有代码来源于Github参考项目与ChatGPT的整合，参考项目[vaxilu](https://github.com/vaxilu/x-ui)，[MHSanaei](https://github.com/MHSanaei/3x-ui)，[yonggekkk](https://github.com/yonggekkk/x-ui-yg?tab=readme-ov-file)，[1panel-dev](https://github.com/1panel-dev/1panel),二进制文件未开源，介意者请勿安装使用
+##感谢支持！微信打赏
+![IMG_2232](https://github.com/user-attachments/assets/59a241b8-e6a2-41e3-a783-ba3e69b19d50)
+
