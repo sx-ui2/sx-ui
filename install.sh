@@ -25,13 +25,12 @@ panel_password=""
 panel_port=""
 panel_base_path=""
 panel_cert_enabled=0
-panel_cert_host=""
 existing_install=0
 v4=""
 v6=""
 wgcfv4=""
 wgcfv6=""
-managed_singbox_repo="sx-ui2/sx-ui-runtime"
+managed_singbox_repo="sx-ui2/sx-ui"
 managed_singbox_tag_prefix="sing-box-stats-v"
 
 detect_release() {
@@ -332,7 +331,6 @@ load_current_panel_settings() {
     [[ -z "${panel_base_path}" ]] && panel_base_path="/"
     if [[ -n "${cert_file}" && -n "${key_file}" ]]; then
         panel_cert_enabled=1
-        panel_cert_host="$(extract_certificate_primary_host "${cert_file}")"
     fi
 }
 
@@ -344,40 +342,9 @@ print_panel_path_tip() {
     fi
 }
 
-extract_certificate_primary_host() {
-    local cert_file="$1"
-    local san_output=""
-    local domain=""
-
-    [[ -z "${cert_file}" || ! -f "${cert_file}" ]] && return 0
-    command -v openssl >/dev/null 2>&1 || return 0
-
-    san_output=$(openssl x509 -in "${cert_file}" -noout -ext subjectAltName 2>/dev/null | tr ',' '\n' | sed 's/^ *//')
-    domain=$(echo "${san_output}" | awk -F: '/^DNS:/{print $2}' | sed 's/^[*.]*//' | sed '/^$/d' | head -n 1)
-    if [[ -n "${domain}" ]]; then
-        echo "${domain}"
-        return 0
-    fi
-
-    domain=$(openssl x509 -in "${cert_file}" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *//p' | sed 's/^[*.]*//' | head -n 1)
-    echo "${domain}"
-}
-
 warn_insecure_http() {
     red "警告：面板将以不安全的 HTTP 方式运行。"
     yellow "建议安装完成后尽快进入“证书管理”为面板配置 HTTPS 证书。"
-}
-
-print_recent_command_output() {
-    local title="$1"
-    local output="$2"
-    local lines="${3:-30}"
-
-    output="$(printf '%s' "${output}" | sed 's/\r$//')"
-    [[ -z "${output}" ]] && return 0
-
-    yellow "${title}（最近 ${lines} 行）："
-    printf '%s\n' "${output}" | tail -n "${lines}"
 }
 
 prompt_panel_username() {
@@ -526,15 +493,11 @@ configure_certificate_after_install() {
                 panel_acme_args+=(-panelAcmeKeyFile "${key_file}")
             fi
 
-            local panel_cert_output=""
-            if panel_cert_output=$(/usr/local/sx-ui/sx-ui setting "${panel_acme_args[@]}" 2>&1); then
+            if /usr/local/sx-ui/sx-ui setting "${panel_acme_args[@]}"; then
                 green "面板证书申请并保存成功。"
-                print_recent_command_output "证书申请日志" "${panel_cert_output}" 30
                 panel_cert_enabled=1
-                panel_cert_host="${cert_domain}"
             else
                 red "面板证书申请失败，已继续安装。"
-                print_recent_command_output "证书申请日志" "${panel_cert_output}" 30
                 warn_insecure_http
             fi
             ;;
@@ -548,15 +511,11 @@ configure_certificate_after_install() {
                 warn_insecure_http
                 return 0
             fi
-            local panel_cert_output=""
-            if panel_cert_output=$(/usr/local/sx-ui/sx-ui setting -webCertFile "${cert_file}" -webKeyFile "${key_file}" 2>&1); then
+            if /usr/local/sx-ui/sx-ui setting -webCertFile "${cert_file}" -webKeyFile "${key_file}"; then
                 green "面板证书路径保存成功。"
-                print_recent_command_output "证书保存日志" "${panel_cert_output}" 30
                 panel_cert_enabled=1
-                panel_cert_host="$(extract_certificate_primary_host "${cert_file}")"
             else
                 red "面板证书路径保存失败，已继续安装。"
-                print_recent_command_output "证书保存日志" "${panel_cert_output}" 30
                 warn_insecure_http
             fi
             ;;
@@ -567,10 +526,15 @@ configure_certificate_after_install() {
 }
 
 configure_after_install() {
+    local reconfigure=""
     if [[ ${existing_install} -eq 1 ]]; then
-        yellow "检测到已安装 sx-ui，已自动保留原有面板登录信息与证书。"
-        load_current_panel_settings
-        return 0
+        echo
+        readp "检测到已安装 sx-ui，是否重新配置面板登录信息与证书？[y/N]：" reconfigure
+        if [[ "${reconfigure}" != "y" && "${reconfigure}" != "Y" ]]; then
+            yellow "已保留原有面板设置。"
+            load_current_panel_settings
+            return 0
+        fi
     fi
 
     echo
@@ -601,15 +565,11 @@ show_finish_message() {
     local ipv6=""
     local protocol="http"
     local path_display=""
-    local secure_link=""
 
     ipv4="$(get_local_ipv4)"
     ipv6="$(get_local_ipv6)"
     [[ ${panel_cert_enabled} -eq 1 ]] && protocol="https"
     path_display="$(print_panel_path_tip)"
-    if [[ "${protocol}" == "https" && -n "${panel_cert_host}" ]]; then
-        secure_link="${protocol}://${panel_cert_host}:${panel_port}${path_display}"
-    fi
 
     echo
     green "sx-ui 安装完成，面板已启动。"
@@ -639,9 +599,6 @@ show_finish_message() {
     echo -e "密码：${green}${panel_password}${plain}"
     echo -e "端口：${green}${panel_port}${plain}"
     echo -e "根路径：${green}${path_display}${plain}"
-    if [[ -n "${secure_link}" ]]; then
-        echo -e "安全域名登录：${blue}${secure_link}${plain}"
-    fi
     if [[ -n "${ipv4}" ]]; then
         echo -e "登录地址：${blue}${protocol}://${ipv4}:${panel_port}${path_display}${plain}"
     fi
