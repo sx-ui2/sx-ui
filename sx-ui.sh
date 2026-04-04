@@ -208,6 +208,55 @@ port_in_use() {
     ss -lntup 2>/dev/null | awk 'NR>1 {print $5}' | grep -Eq "[:.]${port}$"
 }
 
+current_ssh_port() {
+    local port=""
+    port=$(awk '/^[[:space:]]*Port[[:space:]]+[0-9]+/{print $2}' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | tail -n 1)
+    [[ -z "${port}" ]] && port="22"
+    echo "${port}"
+}
+
+ensure_ufw_command() {
+    if command -v ufw >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [[ "${release}" == "ubuntu" || "${release}" == "debian" ]]; then
+        apt-get update -y >/dev/null 2>&1 || apt-get update -y || return 1
+        apt-get install -y ufw >/dev/null 2>&1 || apt-get install -y ufw || return 1
+        command -v ufw >/dev/null 2>&1
+        return $?
+    fi
+
+    return 1
+}
+
+allow_port_via_ufw() {
+    local port="$1"
+    local ssh_port=""
+
+    ensure_ufw_command || return 1
+
+    ssh_port="$(current_ssh_port)"
+    ufw allow "${ssh_port}/tcp" >/dev/null 2>&1 || true
+    ufw allow "${port}/tcp" >/dev/null 2>&1 || true
+
+    if ! ufw status 2>/dev/null | grep -q "^Status: active"; then
+        ufw --force enable >/dev/null 2>&1 || return 1
+    else
+        ufw reload >/dev/null 2>&1 || true
+    fi
+
+    if ufw status 2>/dev/null | grep -Eq "^${port}/tcp[[:space:]]"; then
+        LOGI "已通过 UFW 放行面板端口 ${port}/tcp"
+        if [[ "${ssh_port}" != "${port}" ]]; then
+            LOGI "已通过 UFW 保留 SSH 端口 ${ssh_port}/tcp"
+        fi
+        return 0
+    fi
+
+    return 1
+}
+
 allow_port_in_firewall() {
     local port="$1"
     local opened=0
@@ -225,18 +274,12 @@ allow_port_in_firewall() {
         fi
     fi
 
-    if command -v ufw >/dev/null 2>&1; then
-        if ufw status 2>/dev/null | grep -q "^Status: active"; then
-            ufw allow "${port}/tcp" >/dev/null 2>&1 || true
-            if ufw status 2>/dev/null | grep -Eq "^${port}/tcp[[:space:]]"; then
-                LOGI "已在 UFW 中放行面板端口 ${port}/tcp"
-                opened=1
-            fi
-        fi
+    if allow_port_via_ufw "${port}"; then
+        opened=1
     fi
 
     if [[ ${opened} -eq 0 ]]; then
-        yellow "未检测到运行中的 firewalld/UFW，已跳过自动放行面板端口。"
+        yellow "未检测到可用的 firewalld/UFW，已跳过自动放行面板端口。"
     fi
 }
 
