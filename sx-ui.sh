@@ -629,14 +629,26 @@ install_bbr() {
     [[ $# -eq 0 ]] && before_show_menu
 }
 
+sync_bundled_shell() {
+    local bundled_script="/usr/local/sx-ui/sx-ui.sh"
+
+    if [[ ! -f "${bundled_script}" ]]; then
+        LOGE "当前安装目录中未找到同版管理脚本：${bundled_script}"
+        return 1
+    fi
+
+    cp -f "${bundled_script}" /usr/bin/sx-ui
+    chmod +x /usr/bin/sx-ui
+    return 0
+}
+
 update_shell() {
-    wget -O /usr/bin/sx-ui -N --no-check-certificate https://raw.githubusercontent.com/sx-ui2/sx-ui/main/sx-ui.sh
+    yellow "开始同步当前安装版本附带的管理脚本..."
+    sync_bundled_shell
     if [[ $? != 0 ]]; then
-        LOGE "下载管理脚本失败，请检查本机是否可以访问 Github。"
         [[ $# -eq 0 ]] && before_show_menu
     else
-        chmod +x /usr/bin/sx-ui
-        LOGI "管理脚本更新成功，请重新运行 sx-ui"
+        LOGI "管理脚本已同步为当前安装版本，请重新运行 sx-ui"
         exit 0
     fi
 }
@@ -814,7 +826,7 @@ show_menu() {
     echo "------------------------------------------------------------------------------------"
     green "14. 设置开机自启"
     green "15. 取消开机自启"
-    green "16. 更新管理脚本"
+    green "16. 同步管理脚本"
     green "17. 管理 BBR / 网络加速"
     echo "------------------------------------------------------------------------------------"
     green " 0. 退出脚本"
@@ -867,6 +879,7 @@ if [[ $# -gt 0 ]]; then
         reset-config) check_install 0 && reset_config 0 ;;
         show-config) check_install 0 && check_config 0 ;;
         update-shell) update_shell 0 ;;
+        sync-shell) update_shell 0 ;;
         bbr) install_bbr 0 ;;
         menu) show_menu ;;
         *) exit 0 ;;

@@ -215,6 +215,18 @@ allow_port_in_firewall() {
     fi
 }
 
+sync_management_script() {
+    local bundled_script="/usr/local/sx-ui/sx-ui.sh"
+
+    if [[ ! -f "${bundled_script}" ]]; then
+        red "安装包内未找到管理脚本 ${bundled_script}，无法完成同步。"
+        exit 1
+    fi
+
+    cp -f "${bundled_script}" /usr/bin/sx-ui
+    chmod +x /usr/bin/sx-ui
+}
+
 check_panel_runtime_status() {
     systemctl is-active --quiet sx-ui >/dev/null 2>&1
 }
@@ -673,7 +685,7 @@ show_finish_message() {
     echo "------------------------------------------------------------------------------------"
     green "14. 设置开机自启"
     green "15. 取消开机自启"
-    green "16. 更新管理脚本"
+    green "16. 同步管理脚本"
     green "17. 管理 BBR / 网络加速"
     echo "------------------------------------------------------------------------------------"
     green " 0. 退出脚本"
@@ -781,8 +793,7 @@ install_sx_ui() {
     chmod +x "/usr/local/sx-ui/bin/sing-box-linux-${arch}" 2>/dev/null || true
     install_managed_singbox_runtime
     cp -f /usr/local/sx-ui/sx-ui.service /etc/systemd/system/
-    wget --no-check-certificate -O /usr/bin/sx-ui https://raw.githubusercontent.com/sx-ui2/sx-ui/main/sx-ui.sh
-    chmod +x /usr/bin/sx-ui
+    sync_management_script
 
     configure_after_install
 
