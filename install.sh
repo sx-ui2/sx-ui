@@ -923,6 +923,14 @@ install_sx_ui() {
     tar zxf "/usr/local/sx-ui-linux-${arch}.tar.gz"
     rm -f "/usr/local/sx-ui-linux-${arch}.tar.gz"
 
+    if [[ ! -f /usr/local/sx-ui/sx-ui && -f /usr/local/sx-ui/xui-release ]]; then
+        mv /usr/local/sx-ui/xui-release /usr/local/sx-ui/sx-ui
+    fi
+    if [[ ! -f /usr/local/sx-ui/sx-ui ]]; then
+        red "安装包缺少主程序文件 /usr/local/sx-ui/sx-ui，请重新下载或更新 release 后再试。"
+        exit 1
+    fi
+
     cd /usr/local/sx-ui || exit 1
     chmod +x /usr/local/sx-ui/sx-ui
     chmod +x "/usr/local/sx-ui/bin/xray-linux-${arch}" 2>/dev/null || true
