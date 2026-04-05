@@ -15,6 +15,22 @@ blue() { echo -e "\033[36m\033[01m$1\033[0m"; }
 white() { echo -e "\033[37m\033[01m$1\033[0m"; }
 readp() { read -p "$(yellow "$1")" "$2"; }
 
+print_cli_header() {
+    local subtitle="${1:-安装脚本}"
+    green "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    echo -e "${bblue} ░██     ░██      ░██ ██ ██         ░█${plain}█   ░██     ░██   ░██     ░█${red}█   ░██${plain}  "
+    echo -e "${bblue}  ░██   ░██      ░██    ░░██${plain}        ░██  ░██      ░██  ░██${red}      ░██  ░██${plain}   "
+    echo -e "${bblue}   ░██ ░██      ░██ ${plain}                ░██ ██        ░██ █${red}█        ░██ ██  ${plain}   "
+    echo -e "${bblue}     ░██        ░${plain}██    ░██ ██       ░██ ██        ░█${red}█ ██        ░██ ██  ${plain}  "
+    echo -e "${bblue}     ░██ ${plain}        ░██    ░░██        ░██ ░██       ░${red}██ ░██       ░██ ░██ ${plain}  "
+    echo -e "${bblue}     ░█${plain}█          ░██ ██ ██         ░██  ░░${red}██     ░██  ░░██     ░██  ░░██ ${plain}  "
+    echo
+    white "sx-ui Github 项目 ：github.com/sx-ui2/sx-ui"
+    white "sx-ui ${subtitle}   ：sx-ui"
+    green "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    echo
+}
+
 [[ $EUID -ne 0 ]] && red "错误：必须使用 root 用户运行此脚本！" && exit 1
 
 release=""
@@ -933,8 +949,8 @@ main() {
     ensure_nat64_for_ipv6_only
 
     clear
-    white " sx-ui 安装脚本"
-    white " 系统：${release}    架构：${arch}"
+    print_cli_header "安装脚本"
+    white "系统：${release}    架构：${arch}"
     install_base
     install_sx_ui "$1"
 }

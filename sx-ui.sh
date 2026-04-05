@@ -19,6 +19,22 @@ LOGD() { echo -e "${yellow}[DBG] $* ${plain}"; }
 LOGE() { echo -e "${red}[ERR] $* ${plain}"; }
 LOGI() { echo -e "${green}[INF] $* ${plain}"; }
 
+print_cli_header() {
+    local subtitle="${1:-管理脚本}"
+    green "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    echo -e "${bblue} ░██     ░██      ░██ ██ ██         ░█${plain}█   ░██     ░██   ░██     ░█${red}█   ░██${plain}  "
+    echo -e "${bblue}  ░██   ░██      ░██    ░░██${plain}        ░██  ░██      ░██  ░██${red}      ░██  ░██${plain}   "
+    echo -e "${bblue}   ░██ ░██      ░██ ${plain}                ░██ ██        ░██ █${red}█        ░██ ██  ${plain}   "
+    echo -e "${bblue}     ░██        ░${plain}██    ░██ ██       ░██ ██        ░█${red}█ ██        ░██ ██  ${plain}  "
+    echo -e "${bblue}     ░██ ${plain}        ░██    ░░██        ░██ ░██       ░${red}██ ░██       ░██ ░██ ${plain}  "
+    echo -e "${bblue}     ░█${plain}█          ░██ ██ ██         ░██  ░░${red}██     ░██  ░░██     ░██  ░░██ ${plain}  "
+    echo
+    white "sx-ui Github 项目 ：github.com/sx-ui2/sx-ui"
+    white "sx-ui ${subtitle}   ：sx-ui"
+    green "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    echo
+}
+
 release=""
 os_version=""
 setting_dump=""
@@ -215,6 +231,81 @@ current_ssh_port() {
     echo "${port}"
 }
 
+backup_firewall_rules() {
+    local backup_dir="/etc/sx-ui/firewall-backups"
+    local stamp=""
+
+    mkdir -p "${backup_dir}" >/dev/null 2>&1 || return 1
+    stamp=$(date +%Y%m%d-%H%M%S)
+
+    if command -v iptables-save >/dev/null 2>&1; then
+        iptables-save >"${backup_dir}/iptables-${stamp}.rules" 2>/dev/null || true
+    fi
+    if command -v ip6tables-save >/dev/null 2>&1; then
+        ip6tables-save >"${backup_dir}/ip6tables-${stamp}.rules" 2>/dev/null || true
+    fi
+
+    if [[ -f "${backup_dir}/iptables-${stamp}.rules" || -f "${backup_dir}/ip6tables-${stamp}.rules" ]]; then
+        LOGI "已备份当前防火墙规则到 ${backup_dir}/"
+        return 0
+    fi
+
+    return 1
+}
+
+persist_firewall_rules() {
+    if command -v netfilter-persistent >/dev/null 2>&1; then
+        netfilter-persistent save >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    if command -v service >/dev/null 2>&1; then
+        service iptables save >/dev/null 2>&1 || true
+        service ip6tables save >/dev/null 2>&1 || true
+    fi
+}
+
+reset_filter_tables_for_ufw_cmd() {
+    local cmd="$1"
+
+    command -v "${cmd}" >/dev/null 2>&1 || return 1
+
+    "${cmd}" -P INPUT ACCEPT >/dev/null 2>&1 || true
+    "${cmd}" -P FORWARD ACCEPT >/dev/null 2>&1 || true
+    "${cmd}" -P OUTPUT ACCEPT >/dev/null 2>&1 || true
+    "${cmd}" -t mangle -F >/dev/null 2>&1 || true
+    "${cmd}" -F >/dev/null 2>&1 || true
+    "${cmd}" -X >/dev/null 2>&1 || true
+    return 0
+}
+
+prepare_ufw_takeover() {
+    local prepared=0
+
+    backup_firewall_rules || true
+
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active --quiet firewalld 2>/dev/null; then
+            systemctl stop firewalld >/dev/null 2>&1 || true
+            systemctl disable firewalld >/dev/null 2>&1 || true
+            prepared=1
+        fi
+    fi
+
+    if command -v ufw >/dev/null 2>&1; then
+        ufw disable >/dev/null 2>&1 || true
+        prepared=1
+    fi
+
+    reset_filter_tables_for_ufw_cmd iptables && prepared=1
+    reset_filter_tables_for_ufw_cmd ip6tables && prepared=1
+
+    if [[ ${prepared} -eq 1 ]]; then
+        persist_firewall_rules
+        LOGI "已备份并重置现有 filter/mangle 防火墙规则，后续交由 UFW 接管。"
+    fi
+}
+
 ensure_ufw_command() {
     if command -v ufw >/dev/null 2>&1; then
         return 0
@@ -235,6 +326,7 @@ allow_port_via_ufw() {
     local ssh_port=""
 
     ensure_ufw_command || return 1
+    prepare_ufw_takeover
 
     ssh_port="$(current_ssh_port)"
     ufw allow "${ssh_port}/tcp" >/dev/null 2>&1 || true
@@ -245,6 +337,8 @@ allow_port_via_ufw() {
     else
         ufw reload >/dev/null 2>&1 || true
     fi
+
+    ufw reload >/dev/null 2>&1 || true
 
     if ufw status 2>/dev/null | grep -Eq "^${port}/tcp[[:space:]]"; then
         LOGI "已通过 UFW 放行面板端口 ${port}/tcp"
@@ -843,8 +937,7 @@ show_system_summary() {
 
 show_menu() {
     clear
-    white " sx-ui Github 项目 ：github.com/sx-ui2/sx-ui"
-    white " sx-ui 管理脚本   ：sx-ui"
+    print_cli_header "管理脚本"
     show_system_summary
     echo "------------------------------------------------------------------------------------"
     show_status
