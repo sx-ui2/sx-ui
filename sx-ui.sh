@@ -52,6 +52,7 @@ v6=""
 wgcfv4=""
 wgcfv6=""
 latest_release_version=""
+post_install_exit_code=10
 
 [[ $EUID -ne 0 ]] && LOGE "错误：必须使用 root 用户运行此脚本！" && exit 1
 
@@ -528,10 +529,10 @@ show_access_info() {
 }
 
 install() {
-    bash <(curl -Ls https://raw.githubusercontent.com/sx-ui2/sx-ui/main/install.sh)
-    if [[ $? -eq 0 && $# -eq 0 ]]; then
-        before_show_menu
-    fi
+    SX_UI_MANAGED_INSTALL=1 bash <(curl -Ls https://raw.githubusercontent.com/sx-ui2/sx-ui/main/install.sh)
+    local install_status=$?
+    [[ ${install_status} -eq ${post_install_exit_code} ]] && return 0
+    return ${install_status}
 }
 
 update() {
@@ -541,11 +542,13 @@ update() {
         [[ $# -eq 0 ]] && before_show_menu
         return 0
     fi
-    bash <(curl -Ls https://raw.githubusercontent.com/sx-ui2/sx-ui/main/install.sh)
-    if [[ $? -eq 0 ]]; then
+    SX_UI_MANAGED_INSTALL=1 bash <(curl -Ls https://raw.githubusercontent.com/sx-ui2/sx-ui/main/install.sh)
+    local install_status=$?
+    if [[ ${install_status} -eq 0 || ${install_status} -eq ${post_install_exit_code} ]]; then
         LOGI "更新完成"
-        [[ $# -eq 0 ]] && before_show_menu
+        return 0
     fi
+    return ${install_status}
 }
 
 uninstall() {

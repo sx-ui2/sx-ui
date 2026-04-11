@@ -48,6 +48,7 @@ wgcfv4=""
 wgcfv6=""
 managed_singbox_repo="sx-ui2/sx-ui-runtime"
 managed_singbox_tag_prefix="sing-box-stats-v"
+post_install_exit_code=10
 
 detect_release() {
     if [[ -f /etc/redhat-release ]]; then
@@ -834,7 +835,10 @@ run_post_install_command() {
 
     case "${action}" in
         "" | 0)
-            return 0
+            if [[ "${SX_UI_MANAGED_INSTALL:-}" == "1" ]] || is_management_script_parent; then
+                exit "${post_install_exit_code}"
+            fi
+            exit 0
             ;;
         1)
             /usr/bin/sx-ui install
@@ -891,6 +895,14 @@ run_post_install_command() {
             red "请输入正确的数字【0-17】。"
             ;;
     esac
+}
+
+is_management_script_parent() {
+    local parent_cmd=""
+
+    [[ -r "/proc/${PPID}/cmdline" ]] || return 1
+    parent_cmd="$(tr '\0' ' ' <"/proc/${PPID}/cmdline" 2>/dev/null)"
+    [[ "${parent_cmd}" == *"/usr/bin/sx-ui"* || "${parent_cmd}" == *"sx-ui.sh"* ]]
 }
 
 install_sx_ui() {
