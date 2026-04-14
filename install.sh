@@ -41,6 +41,9 @@ panel_port=""
 panel_base_path=""
 panel_cert_enabled=0
 panel_cert_host=""
+panel_nginx_proxy_enabled="false"
+panel_nginx_proxy_host=""
+panel_nginx_proxy_https="false"
 existing_install=0
 v4=""
 v6=""
@@ -48,6 +51,7 @@ wgcfv4=""
 wgcfv6=""
 managed_singbox_repo="sx-ui2/sx-ui-runtime"
 managed_singbox_tag_prefix="sing-box-stats-v"
+ssh_tunnel_local_port="18080"
 post_install_exit_code=10
 
 detect_release() {
@@ -474,11 +478,16 @@ load_current_panel_settings() {
     panel_password=$(echo "${setting_dump}" | awk -F': ' '$1=="userpasswd"{print $2}')
     panel_port=$(echo "${setting_dump}" | awk -F': ' '$1=="port"{print $2}')
     panel_base_path=$(echo "${setting_dump}" | awk -F': ' '$1=="webBasePath"{print $2}')
+    panel_nginx_proxy_enabled=$(echo "${setting_dump}" | awk -F': ' '$1=="webNginxProxyEnable"{print $2}')
+    panel_nginx_proxy_host=$(echo "${setting_dump}" | awk -F': ' '$1=="webNginxProxyHost"{print $2}')
+    panel_nginx_proxy_https=$(echo "${setting_dump}" | awk -F': ' '$1=="webNginxProxyHTTPS"{print $2}')
     local cert_file=""
     local key_file=""
     cert_file=$(echo "${setting_dump}" | awk -F': ' '$1=="webCertFile"{print $2}')
     key_file=$(echo "${setting_dump}" | awk -F': ' '$1=="webKeyFile"{print $2}')
     [[ -z "${panel_base_path}" ]] && panel_base_path="/"
+    [[ -z "${panel_nginx_proxy_enabled}" ]] && panel_nginx_proxy_enabled="false"
+    [[ -z "${panel_nginx_proxy_https}" ]] && panel_nginx_proxy_https="false"
     if [[ -n "${cert_file}" && -n "${key_file}" ]]; then
         panel_cert_enabled=1
         panel_cert_host="$(extract_certificate_primary_host "${cert_file}")"
@@ -491,6 +500,42 @@ print_panel_path_tip() {
     else
         echo "${panel_base_path}"
     fi
+}
+
+panel_has_reverse_proxy() {
+    [[ "${panel_nginx_proxy_enabled}" == "true" && -n "${panel_nginx_proxy_host}" ]]
+}
+
+show_ssh_tunnel_info() {
+    local ipv4="$1"
+    local ipv6="$2"
+    local path_display="$3"
+    local ssh_port=""
+    local local_port="${ssh_tunnel_local_port}"
+    local local_link=""
+
+    [[ -z "${panel_port}" ]] && return 0
+    ssh_port="$(current_ssh_port)"
+    local_link="http://127.0.0.1:${local_port}${path_display}"
+
+    echo "----------------------------------------------"
+    yellow "当前未配置 HTTPS 证书，也未启用 Nginx 反代。"
+    yellow "建议先通过 SSH 本地隧道安全访问面板，再进入“证书管理”为面板配置 HTTPS。"
+    echo -e "本地访问链接：${blue}${local_link}${plain}"
+    if [[ -n "${ipv4}" ]]; then
+        echo -e "SSH 隧道命令（IPv4）：${blue}ssh -L ${local_port}:127.0.0.1:${panel_port} -p ${ssh_port} <SSH用户名>@${ipv4}${plain}"
+    fi
+    if [[ -n "${ipv6}" ]]; then
+        echo -e "SSH 隧道命令（IPv6）：${blue}ssh -L ${local_port}:127.0.0.1:${panel_port} -p ${ssh_port} <SSH用户名>@[${ipv6}]${plain}"
+    fi
+    if [[ -z "${ipv4}" && -z "${ipv6}" ]]; then
+        echo -e "SSH 隧道命令：${blue}ssh -L ${local_port}:127.0.0.1:${panel_port} -p ${ssh_port} <SSH用户名>@<服务器IP或域名>${plain}"
+    fi
+    echo "使用方法："
+    echo "1. 在你自己的电脑终端执行上面的 SSH 隧道命令。"
+    echo "2. 保持该 SSH 会话不要关闭。"
+    echo "3. 在本机浏览器打开上面的本地访问链接。"
+    echo "4. 如果本机 ${local_port} 端口被占用，把命令左侧的 ${local_port} 改成其他本地端口，并同步修改访问链接。"
 }
 
 extract_certificate_primary_host() {
@@ -796,6 +841,9 @@ show_finish_message() {
     fi
     if [[ -n "${ipv6}" ]]; then
         echo -e "登录地址：${blue}${protocol}://[${ipv6}]:${panel_port}${path_display}${plain}"
+    fi
+    if [[ ${panel_cert_enabled} -eq 0 ]] && ! panel_has_reverse_proxy; then
+        show_ssh_tunnel_info "${ipv4}" "${ipv6}" "${path_display}"
     fi
     echo "----------------------------------------------"
     if [[ ${existing_install} -eq 0 && ${panel_cert_enabled} -eq 0 ]]; then
