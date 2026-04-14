@@ -52,6 +52,7 @@ v6=""
 wgcfv4=""
 wgcfv6=""
 latest_release_version=""
+ssh_tunnel_local_port="18080"
 post_install_exit_code=10
 
 [[ $EUID -ne 0 ]] && LOGE "错误：必须使用 root 用户运行此脚本！" && exit 1
@@ -497,6 +498,43 @@ get_local_ipv6() {
     get_public_ipv6
 }
 
+panel_has_https() {
+    [[ -n "${current_cert_file}" && -n "${current_key_file}" ]]
+}
+
+panel_has_reverse_proxy() {
+    [[ "${current_nginx_proxy_enabled}" == "true" && -n "${current_nginx_proxy_host}" ]]
+}
+
+show_ssh_tunnel_info() {
+    local ipv4="$1"
+    local ipv6="$2"
+    local local_port="${ssh_tunnel_local_port}"
+    local ssh_port=""
+    local local_link=""
+
+    [[ -z "${current_port}" ]] && return 0
+    ssh_port="$(current_ssh_port)"
+    local_link="http://127.0.0.1:${local_port}${current_base_path}"
+
+    echo -e "SSH 隧道访问: ${yellow}当前未配置 HTTPS 证书，也未启用 Nginx 反代，建议先通过 SSH 隧道安全访问${plain}"
+    echo -e "本地访问链接: ${blue}${local_link}${plain}"
+    if [[ -n "${ipv4}" ]]; then
+        echo -e "SSH 隧道命令（IPv4）: ${blue}ssh -L ${local_port}:127.0.0.1:${current_port} -p ${ssh_port} <SSH用户名>@${ipv4}${plain}"
+    fi
+    if [[ -n "${ipv6}" ]]; then
+        echo -e "SSH 隧道命令（IPv6）: ${blue}ssh -L ${local_port}:127.0.0.1:${current_port} -p ${ssh_port} <SSH用户名>@[${ipv6}]${plain}"
+    fi
+    if [[ -z "${ipv4}" && -z "${ipv6}" ]]; then
+        echo -e "SSH 隧道命令: ${blue}ssh -L ${local_port}:127.0.0.1:${current_port} -p ${ssh_port} <SSH用户名>@<服务器IP或域名>${plain}"
+    fi
+    echo "使用方法:"
+    echo "1. 在你自己的电脑终端执行上面的 SSH 隧道命令。"
+    echo "2. 保持该 SSH 会话不要关闭。"
+    echo "3. 在本机浏览器打开上面的本地访问链接。"
+    echo "4. 如果本机 ${local_port} 端口被占用，把命令左侧的 ${local_port} 改成其他本地端口，并同步修改访问链接。"
+}
+
 show_access_info() {
     local ipv4=""
     local ipv6=""
@@ -504,11 +542,11 @@ show_access_info() {
     local proxy_protocol="http"
 
     load_panel_settings
-    [[ -n "${current_cert_file}" && -n "${current_key_file}" ]] && protocol="https"
+    panel_has_https && protocol="https"
     ipv4="$(get_local_ipv4)"
     ipv6="$(get_local_ipv6)"
 
-    if [[ "${current_nginx_proxy_enabled}" == "true" && -n "${current_nginx_proxy_host}" ]]; then
+    if panel_has_reverse_proxy; then
         [[ "${current_nginx_proxy_https}" == "true" ]] && proxy_protocol="https"
         echo -e "反代登录: ${blue}${proxy_protocol}://${current_nginx_proxy_host}${current_base_path}${plain}"
         return 0
@@ -525,6 +563,10 @@ show_access_info() {
         if [[ -n "${ipv6}" ]]; then
             echo -e "登录地址: ${blue}${protocol}://[${ipv6}]:${current_port}${current_base_path}${plain}"
         fi
+    fi
+
+    if ! panel_has_https && ! panel_has_reverse_proxy; then
+        show_ssh_tunnel_info "${ipv4}" "${ipv6}"
     fi
 }
 
@@ -648,6 +690,8 @@ check_config() {
     load_panel_settings
     echo
     echo "${setting_dump}"
+    echo
+    show_access_info
     [[ $# -eq 0 ]] && before_show_menu
 }
 
@@ -904,7 +948,7 @@ show_panel_summary() {
     echo -e "面板密码: ${green}${current_password}${plain}"
     echo -e "面板端口: ${green}${current_port}${plain}"
     echo -e "面板根路径: ${green}${current_base_path}${plain}"
-    if [[ "${current_nginx_proxy_enabled}" == "true" ]]; then
+    if panel_has_reverse_proxy; then
         echo -e "访问方式: ${green}Nginx 反代${plain}"
         if [[ -n "${current_nginx_proxy_host}" ]]; then
             if [[ "${current_nginx_proxy_https}" == "true" ]]; then
@@ -913,7 +957,7 @@ show_panel_summary() {
                 echo -e "反代域名: ${yellow}http://${current_nginx_proxy_host}${current_base_path}${plain}"
             fi
         fi
-    elif [[ -n "${current_cert_file}" && -n "${current_key_file}" ]]; then
+    elif panel_has_https; then
         echo -e "证书状态: ${green}已配置 HTTPS${plain}"
     else
         echo -e "证书状态: ${yellow}未配置，当前将使用 HTTP${plain}"
