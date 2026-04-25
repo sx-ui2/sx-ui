@@ -520,19 +520,20 @@ show_ssh_tunnel_info() {
     echo -e "SSH 隧道访问: ${yellow}当前未配置 HTTPS 证书，也未启用 Nginx 反代，建议先通过 SSH 隧道安全访问${plain}"
     echo -e "本地访问链接: ${blue}${local_link}${plain}"
     if [[ -n "${ipv4}" ]]; then
-        echo -e "SSH 隧道命令（IPv4）: ${blue}ssh -L ${local_port}:127.0.0.1:${current_port} -p ${ssh_port} <SSH用户名>@${ipv4}${plain}"
+        echo -e "SSH 隧道命令（IPv4）: ${blue}ssh -L ${local_port}:127.0.0.1:${current_port} -p ${ssh_port} root@${ipv4}${plain}"
     fi
     if [[ -n "${ipv6}" ]]; then
-        echo -e "SSH 隧道命令（IPv6）: ${blue}ssh -L ${local_port}:127.0.0.1:${current_port} -p ${ssh_port} <SSH用户名>@[${ipv6}]${plain}"
+        echo -e "SSH 隧道命令（IPv6）: ${blue}ssh -L ${local_port}:127.0.0.1:${current_port} -p ${ssh_port} root@[${ipv6}]${plain}"
     fi
     if [[ -z "${ipv4}" && -z "${ipv6}" ]]; then
-        echo -e "SSH 隧道命令: ${blue}ssh -L ${local_port}:127.0.0.1:${current_port} -p ${ssh_port} <SSH用户名>@<服务器IP或域名>${plain}"
+        echo -e "SSH 隧道命令: ${blue}ssh -L ${local_port}:127.0.0.1:${current_port} -p ${ssh_port} root@<服务器IP或域名>${plain}"
     fi
     echo "使用方法:"
     echo "1. 在你自己的电脑终端执行上面的 SSH 隧道命令。"
     echo "2. 保持该 SSH 会话不要关闭。"
     echo "3. 在本机浏览器打开上面的本地访问链接。"
     echo "4. 如果本机 ${local_port} 端口被占用，把命令左侧的 ${local_port} 改成其他本地端口，并同步修改访问链接。"
+    echo "5. 如果服务器禁用了 root SSH 登录，请把命令里的 root 改成实际可登录的系统用户。"
 }
 
 show_access_info() {
@@ -684,6 +685,24 @@ reset_config() {
     allow_port_in_firewall "${port}"
     LOGI "默认设置已重新写回"
     confirm_restart "$@"
+}
+
+open_panel_port() {
+    load_panel_settings
+    if [[ -z "${current_port}" ]]; then
+        LOGE "未读取到面板端口，无法放行防火墙端口。"
+        [[ $# -eq 0 ]] && before_show_menu
+        return 1
+    fi
+
+    yellow "开始尝试放行面板端口 ${current_port}/tcp ..."
+    allow_port_in_firewall "${current_port}"
+    if [[ $? -eq 0 ]]; then
+        LOGI "面板端口 ${current_port}/tcp 已处理完成。"
+    else
+        LOGE "放行面板端口 ${current_port}/tcp 失败。"
+    fi
+    [[ $# -eq 0 ]] && before_show_menu
 }
 
 check_config() {
@@ -875,6 +894,7 @@ check_install() {
 }
 
 show_status() {
+    load_panel_settings
     check_status
     case $? in
         0)
@@ -890,6 +910,9 @@ show_status() {
     show_enable_status
     show_xray_status
     show_singbox_status
+    if panel_has_reverse_proxy; then
+        show_nginx_status
+    fi
 }
 
 show_enable_status() {
@@ -921,6 +944,18 @@ show_singbox_status() {
         echo -e "sing-box 状态: ${green}运行中${plain}"
     else
         echo -e "sing-box 状态: ${red}未运行${plain}"
+    fi
+}
+
+check_nginx_status() {
+    systemctl is-active --quiet nginx >/dev/null 2>&1
+}
+
+show_nginx_status() {
+    if check_nginx_status; then
+        echo -e "nginx 状态: ${green}运行中${plain}"
+    else
+        echo -e "nginx 状态: ${red}未运行${plain}"
     fi
 }
 
@@ -1010,11 +1045,12 @@ show_menu() {
     green "15. 取消开机自启"
     green "16. 同步管理脚本"
     green "17. 管理 BBR / 网络加速"
+    green "18. 放行面板端口"
     echo "------------------------------------------------------------------------------------"
     green " 0. 退出脚本"
     red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
     echo
-    readp "请输入数字【0-17】：" num
+    readp "请输入数字【0-18】：" num
 
     case "${num}" in
         0) exit 0 ;;
@@ -1035,7 +1071,8 @@ show_menu() {
         15) check_install && disable ;;
         16) update_shell ;;
         17) install_bbr ;;
-        *) LOGE "请输入正确的数字【0-17】" && before_show_menu ;;
+        18) check_install && open_panel_port ;;
+        *) LOGE "请输入正确的数字【0-18】" && before_show_menu ;;
     esac
 }
 
@@ -1063,6 +1100,7 @@ if [[ $# -gt 0 ]]; then
         update-shell) update_shell 0 ;;
         sync-shell) update_shell 0 ;;
         bbr) install_bbr 0 ;;
+        open-panel-port) check_install 0 && open_panel_port 0 ;;
         menu) show_menu ;;
         *) exit 0 ;;
     esac

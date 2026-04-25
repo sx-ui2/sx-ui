@@ -384,6 +384,10 @@ check_singbox_runtime_status() {
     pgrep -f "sing-box-linux" >/dev/null 2>&1
 }
 
+check_nginx_runtime_status() {
+    systemctl is-active --quiet nginx >/dev/null 2>&1
+}
+
 enable_panel_autostart() {
     if systemctl enable sx-ui >/dev/null 2>&1; then
         green "已自动设置 sx-ui 开机自启。"
@@ -506,6 +510,10 @@ panel_has_reverse_proxy() {
     [[ "${panel_nginx_proxy_enabled}" == "true" && -n "${panel_nginx_proxy_host}" ]]
 }
 
+panel_has_https() {
+    [[ ${panel_cert_enabled} -eq 1 ]]
+}
+
 show_ssh_tunnel_info() {
     local ipv4="$1"
     local ipv6="$2"
@@ -523,19 +531,20 @@ show_ssh_tunnel_info() {
     yellow "建议先通过 SSH 本地隧道安全访问面板，再进入“证书管理”为面板配置 HTTPS。"
     echo -e "本地访问链接：${blue}${local_link}${plain}"
     if [[ -n "${ipv4}" ]]; then
-        echo -e "SSH 隧道命令（IPv4）：${blue}ssh -L ${local_port}:127.0.0.1:${panel_port} -p ${ssh_port} <SSH用户名>@${ipv4}${plain}"
+        echo -e "SSH 隧道命令（IPv4）：${blue}ssh -L ${local_port}:127.0.0.1:${panel_port} -p ${ssh_port} root@${ipv4}${plain}"
     fi
     if [[ -n "${ipv6}" ]]; then
-        echo -e "SSH 隧道命令（IPv6）：${blue}ssh -L ${local_port}:127.0.0.1:${panel_port} -p ${ssh_port} <SSH用户名>@[${ipv6}]${plain}"
+        echo -e "SSH 隧道命令（IPv6）：${blue}ssh -L ${local_port}:127.0.0.1:${panel_port} -p ${ssh_port} root@[${ipv6}]${plain}"
     fi
     if [[ -z "${ipv4}" && -z "${ipv6}" ]]; then
-        echo -e "SSH 隧道命令：${blue}ssh -L ${local_port}:127.0.0.1:${panel_port} -p ${ssh_port} <SSH用户名>@<服务器IP或域名>${plain}"
+        echo -e "SSH 隧道命令：${blue}ssh -L ${local_port}:127.0.0.1:${panel_port} -p ${ssh_port} root@<服务器IP或域名>${plain}"
     fi
     echo "使用方法："
     echo "1. 在你自己的电脑终端执行上面的 SSH 隧道命令。"
     echo "2. 保持该 SSH 会话不要关闭。"
     echo "3. 在本机浏览器打开上面的本地访问链接。"
     echo "4. 如果本机 ${local_port} 端口被占用，把命令左侧的 ${local_port} 改成其他本地端口，并同步修改访问链接。"
+    echo "5. 如果服务器禁用了 root SSH 登录，请把命令里的 root 改成实际可登录的系统用户。"
 }
 
 extract_certificate_primary_host() {
@@ -795,15 +804,17 @@ show_finish_message() {
     local ipv6=""
     local protocol="http"
     local path_display=""
-    local secure_link=""
+    local proxy_protocol="http"
+    local version=""
 
+    load_current_panel_settings
     ipv4="$(get_local_ipv4)"
     ipv6="$(get_local_ipv6)"
-    [[ ${panel_cert_enabled} -eq 1 ]] && protocol="https"
+    panel_has_https && protocol="https"
     path_display="$(print_panel_path_tip)"
-    if [[ "${protocol}" == "https" && -n "${panel_cert_host}" ]]; then
-        secure_link="${protocol}://${panel_cert_host}:${panel_port}${path_display}"
-    fi
+    version=$(/usr/local/sx-ui/sx-ui -v 2>/dev/null)
+    [[ -z "${version}" ]] && version="未知"
+    [[ "${panel_nginx_proxy_https}" == "true" ]] && proxy_protocol="https"
 
     echo
     green "sx-ui 安装完成，面板已启动。"
@@ -828,25 +839,52 @@ show_finish_message() {
     else
         echo -e "sing-box 状态：${red}未运行${plain}"
     fi
+    if panel_has_reverse_proxy; then
+        if check_nginx_runtime_status; then
+            echo -e "nginx 状态：${green}运行中${plain}"
+        else
+            echo -e "nginx 状态：${red}未运行${plain}"
+        fi
+    fi
     echo "----------------------------------------------"
-    echo -e "用户名：${green}${panel_username}${plain}"
-    echo -e "密码：${green}${panel_password}${plain}"
-    echo -e "端口：${green}${panel_port}${plain}"
-    echo -e "根路径：${green}${path_display}${plain}"
-    if [[ -n "${secure_link}" ]]; then
-        echo -e "安全域名登录：${blue}${secure_link}${plain}"
+    echo -e "当前版本：${bblue}${version}${plain}"
+    latest_release_version="$(resolve_latest_sxui_release)"
+    if [[ -n "${latest_release_version}" ]]; then
+        if version_lt "${version}" "${latest_release_version}"; then
+            echo -e "最新版本：${yellow}${latest_release_version}${plain}  ${yellow}(可选择 2 更新)${plain}"
+        else
+            echo -e "最新版本：${green}${latest_release_version}${plain}"
+        fi
     fi
-    if [[ -n "${ipv4}" ]]; then
-        echo -e "登录地址：${blue}${protocol}://${ipv4}:${panel_port}${path_display}${plain}"
+    echo -e "面板用户名：${green}${panel_username}${plain}"
+    echo -e "面板密码：${green}${panel_password}${plain}"
+    echo -e "面板端口：${green}${panel_port}${plain}"
+    echo -e "面板根路径：${green}${path_display}${plain}"
+    if panel_has_reverse_proxy; then
+        echo -e "访问方式：${green}Nginx 反代${plain}"
+        echo -e "反代域名：${green}${proxy_protocol}://${panel_nginx_proxy_host}${path_display}${plain}"
+        echo -e "反代登录：${blue}${proxy_protocol}://${panel_nginx_proxy_host}${path_display}${plain}"
+    elif panel_has_https; then
+        echo -e "证书状态：${green}已配置 HTTPS${plain}"
+        if [[ -n "${panel_cert_host}" ]]; then
+            echo -e "安全域名登录：${blue}${protocol}://${panel_cert_host}:${panel_port}${path_display}${plain}"
+        fi
+    else
+        echo -e "证书状态：${yellow}未配置，当前将使用 HTTP${plain}"
     fi
-    if [[ -n "${ipv6}" ]]; then
-        echo -e "登录地址：${blue}${protocol}://[${ipv6}]:${panel_port}${path_display}${plain}"
+    if ! panel_has_reverse_proxy; then
+        if [[ -n "${ipv4}" ]]; then
+            echo -e "登录地址：${blue}${protocol}://${ipv4}:${panel_port}${path_display}${plain}"
+        fi
+        if [[ -n "${ipv6}" ]]; then
+            echo -e "登录地址：${blue}${protocol}://[${ipv6}]:${panel_port}${path_display}${plain}"
+        fi
     fi
-    if [[ ${panel_cert_enabled} -eq 0 ]] && ! panel_has_reverse_proxy; then
+    if ! panel_has_https && ! panel_has_reverse_proxy; then
         show_ssh_tunnel_info "${ipv4}" "${ipv6}" "${path_display}"
     fi
     echo "----------------------------------------------"
-    if [[ ${existing_install} -eq 0 && ${panel_cert_enabled} -eq 0 ]]; then
+    if [[ ${existing_install} -eq 0 ]] && ! panel_has_https && ! panel_has_reverse_proxy; then
         red "安全提示：当前为首次安装，面板暂时通过 HTTP 提供服务，存在安全风险。"
         yellow "请尽快登录面板后，进入左侧“证书管理”为面板配置 HTTPS 证书。"
         echo "----------------------------------------------"
@@ -872,6 +910,7 @@ show_finish_message() {
     green "15. 取消开机自启"
     green "16. 同步管理脚本"
     green "17. 管理 BBR / 网络加速"
+    green "18. 放行面板端口"
     echo "------------------------------------------------------------------------------------"
     green " 0. 退出脚本"
 }
@@ -939,8 +978,11 @@ run_post_install_command() {
         17)
             /usr/bin/sx-ui bbr
             ;;
+        18)
+            /usr/bin/sx-ui open-panel-port
+            ;;
         *)
-            red "请输入正确的数字【0-17】。"
+            red "请输入正确的数字【0-18】。"
             ;;
     esac
 }
