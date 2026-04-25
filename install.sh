@@ -136,6 +136,14 @@ resolve_latest_sxui_release() {
         | head -n 1
 }
 
+version_lt() {
+    local left="$1"
+    local right="$2"
+    [[ -z "${left}" || -z "${right}" ]] && return 1
+    [[ "${left}" == "${right}" ]] && return 1
+    [[ "$(printf '%s\n%s\n' "${left}" "${right}" | sort -V | head -n 1)" == "${left}" ]]
+}
+
 resolve_latest_managed_singbox_release() {
     curl -Ls "https://api.github.com/repos/${managed_singbox_repo}/releases?per_page=50" \
         | grep '"tag_name":' \
@@ -451,6 +459,51 @@ install_managed_singbox_runtime() {
     chmod +x "/usr/local/sx-ui/bin/sing-box-linux-${arch}" 2>/dev/null || true
     rm -rf "${tmp_dir}"
     green "已切换为支持流量统计的 sing-box stats 内核 ${version}。"
+}
+
+preserve_runtime_binaries() {
+    local source_bin_dir="/usr/local/sx-ui/bin"
+    local preserve_dir="$1"
+    local file=""
+
+    [[ -d "${source_bin_dir}" ]] || return 0
+
+    mkdir -p "${preserve_dir}"
+    for file in \
+        "xray-linux-${arch}" \
+        "sing-box-linux-${arch}" \
+        "sing-box-linux-${arch}-build-info.json" \
+        "masque-warp-linux-${arch}" \
+        "libcronet.so"; do
+        if [[ -f "${source_bin_dir}/${file}" ]]; then
+            cp -f "${source_bin_dir}/${file}" "${preserve_dir}/${file}"
+        fi
+    done
+}
+
+restore_runtime_binaries() {
+    local preserve_dir="$1"
+    local target_bin_dir="/usr/local/sx-ui/bin"
+    local file=""
+
+    [[ -d "${preserve_dir}" ]] || return 0
+
+    mkdir -p "${target_bin_dir}"
+    for file in \
+        "xray-linux-${arch}" \
+        "sing-box-linux-${arch}" \
+        "sing-box-linux-${arch}-build-info.json" \
+        "masque-warp-linux-${arch}" \
+        "libcronet.so"; do
+        if [[ -f "${preserve_dir}/${file}" ]]; then
+            cp -f "${preserve_dir}/${file}" "${target_bin_dir}/${file}"
+        fi
+    done
+
+    chmod +x "${target_bin_dir}/xray-linux-${arch}" 2>/dev/null || true
+    chmod +x "${target_bin_dir}/sing-box-linux-${arch}" 2>/dev/null || true
+    chmod +x "${target_bin_dir}/masque-warp-linux-${arch}" 2>/dev/null || true
+    chmod +x "${target_bin_dir}/libcronet.so" 2>/dev/null || true
 }
 
 normalize_base_path() {
@@ -998,6 +1051,7 @@ is_management_script_parent() {
 install_sx_ui() {
     local last_version=""
     local archive_url=""
+    local preserve_dir=""
 
     [[ -x /usr/local/sx-ui/sx-ui ]] && existing_install=1
     systemctl stop sx-ui >/dev/null 2>&1
@@ -1021,6 +1075,12 @@ install_sx_ui() {
         exit 1
     fi
 
+    if [[ "${existing_install:-0}" -eq 1 ]]; then
+        preserve_dir="/tmp/sx-ui-runtime-preserve-${arch}"
+        rm -rf "${preserve_dir}"
+        preserve_runtime_binaries "${preserve_dir}"
+    fi
+
     rm -rf /usr/local/sx-ui
     tar zxf "/usr/local/sx-ui-linux-${arch}.tar.gz"
     rm -f "/usr/local/sx-ui-linux-${arch}.tar.gz"
@@ -1037,7 +1097,12 @@ install_sx_ui() {
     chmod +x /usr/local/sx-ui/sx-ui
     chmod +x "/usr/local/sx-ui/bin/xray-linux-${arch}" 2>/dev/null || true
     chmod +x "/usr/local/sx-ui/bin/sing-box-linux-${arch}" 2>/dev/null || true
-    install_managed_singbox_runtime
+    if [[ "${existing_install:-0}" -eq 1 ]]; then
+        restore_runtime_binaries "${preserve_dir}"
+        rm -rf "${preserve_dir}"
+    else
+        install_managed_singbox_runtime
+    fi
     cp -f /usr/local/sx-ui/sx-ui.service /etc/systemd/system/
     sync_management_script
 
