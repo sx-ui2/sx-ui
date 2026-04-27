@@ -272,119 +272,89 @@ current_ssh_port() {
     echo "${port}"
 }
 
-backup_firewall_rules() {
-    local backup_dir="/etc/sx-ui/firewall-backups"
-    local stamp=""
-
-    mkdir -p "${backup_dir}" >/dev/null 2>&1 || return 1
-    stamp=$(date +%Y%m%d-%H%M%S)
-
-    if command -v iptables-save >/dev/null 2>&1; then
-        iptables-save >"${backup_dir}/iptables-${stamp}.rules" 2>/dev/null || true
-    fi
-    if command -v ip6tables-save >/dev/null 2>&1; then
-        ip6tables-save >"${backup_dir}/ip6tables-${stamp}.rules" 2>/dev/null || true
-    fi
-
-    if [[ -f "${backup_dir}/iptables-${stamp}.rules" || -f "${backup_dir}/ip6tables-${stamp}.rules" ]]; then
-        green "已备份当前防火墙规则到 ${backup_dir}/"
-        return 0
-    fi
-
-    return 1
-}
-
-persist_firewall_rules() {
-    if command -v netfilter-persistent >/dev/null 2>&1; then
-        netfilter-persistent save >/dev/null 2>&1 || true
-        return 0
-    fi
-
-    if command -v service >/dev/null 2>&1; then
-        service iptables save >/dev/null 2>&1 || true
-        service ip6tables save >/dev/null 2>&1 || true
-    fi
-}
-
-reset_filter_tables_for_ufw_cmd() {
-    local cmd="$1"
-
-    command -v "${cmd}" >/dev/null 2>&1 || return 1
-
-    "${cmd}" -P INPUT ACCEPT >/dev/null 2>&1 || true
-    "${cmd}" -P FORWARD ACCEPT >/dev/null 2>&1 || true
-    "${cmd}" -P OUTPUT ACCEPT >/dev/null 2>&1 || true
-    "${cmd}" -t mangle -F >/dev/null 2>&1 || true
-    "${cmd}" -F >/dev/null 2>&1 || true
-    "${cmd}" -X >/dev/null 2>&1 || true
-    return 0
-}
-
-prepare_ufw_takeover() {
-    local prepared=0
-
-    backup_firewall_rules || true
-
-    if command -v systemctl >/dev/null 2>&1; then
-        if systemctl is-active --quiet firewalld 2>/dev/null; then
-            systemctl stop firewalld >/dev/null 2>&1 || true
-            systemctl disable firewalld >/dev/null 2>&1 || true
-            prepared=1
-        fi
-    fi
-
-    if command -v ufw >/dev/null 2>&1; then
-        ufw disable >/dev/null 2>&1 || true
-        prepared=1
-    fi
-
-    reset_filter_tables_for_ufw_cmd iptables && prepared=1
-    reset_filter_tables_for_ufw_cmd ip6tables && prepared=1
-
-    if [[ ${prepared} -eq 1 ]]; then
-        persist_firewall_rules
-        green "已备份并重置现有 filter/mangle 防火墙规则，后续交由 UFW 接管。"
-    fi
-}
-
-ensure_ufw_command() {
-    if command -v ufw >/dev/null 2>&1; then
-        return 0
-    fi
-
-    if [[ "${release}" == "ubuntu" || "${release}" == "debian" ]]; then
-        apt-get update -y >/dev/null 2>&1 || apt-get update -y || return 1
-        apt-get install -y ufw >/dev/null 2>&1 || apt-get install -y ufw || return 1
-        command -v ufw >/dev/null 2>&1
-        return $?
-    fi
-
-    return 1
-}
-
 allow_port_via_ufw() {
     local port="$1"
     local ssh_port=""
 
-    ensure_ufw_command || return 1
-    prepare_ufw_takeover
+    command -v ufw >/dev/null 2>&1 || return 1
+    if ! ufw status 2>/dev/null | grep -q "^Status: active"; then
+        return 1
+    fi
 
     ssh_port="$(current_ssh_port)"
     ufw allow "${ssh_port}/tcp" >/dev/null 2>&1 || true
     ufw allow "${port}/tcp" >/dev/null 2>&1 || true
-
-    if ! ufw status 2>/dev/null | grep -q "^Status: active"; then
-        ufw --force enable >/dev/null 2>&1 || return 1
-    else
-        ufw reload >/dev/null 2>&1 || true
-    fi
-
     ufw reload >/dev/null 2>&1 || true
 
     if ufw status 2>/dev/null | grep -Eq "^${port}/tcp[[:space:]]"; then
         green "已通过 UFW 放行面板端口 ${port}/tcp"
         if [[ "${ssh_port}" != "${port}" ]]; then
             green "已通过 UFW 保留 SSH 端口 ${ssh_port}/tcp"
+        fi
+        return 0
+    fi
+
+	return 1
+}
+
+persist_iptables_rules() {
+    if command -v netfilter-persistent >/dev/null 2>&1; then
+        netfilter-persistent save >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    if [[ -d /etc/iptables ]]; then
+        if command -v iptables-save >/dev/null 2>&1; then
+            iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
+        fi
+        if command -v ip6tables-save >/dev/null 2>&1; then
+            ip6tables-save >/etc/iptables/rules.v6 2>/dev/null || true
+        fi
+        return 0
+    fi
+
+    if command -v service >/dev/null 2>&1; then
+        service iptables save >/dev/null 2>&1 || true
+        service ip6tables save >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    return 1
+}
+
+allow_port_via_iptables_cmd() {
+    local cmd="$1"
+    local port="$2"
+
+    command -v "${cmd}" >/dev/null 2>&1 || return 1
+    "${cmd}" -C INPUT -p tcp --dport "${port}" -j ACCEPT >/dev/null 2>&1 || \
+        "${cmd}" -I INPUT -p tcp --dport "${port}" -j ACCEPT >/dev/null 2>&1 || return 1
+    return 0
+}
+
+allow_port_via_iptables() {
+    local port="$1"
+    local ssh_port=""
+    local panel_opened=0
+    local ssh_opened=0
+
+    ssh_port="$(current_ssh_port)"
+    if allow_port_via_iptables_cmd iptables "${ssh_port}"; then
+        ssh_opened=1
+    fi
+    if allow_port_via_iptables_cmd iptables "${port}"; then
+        panel_opened=1
+    fi
+    allow_port_via_iptables_cmd ip6tables "${ssh_port}" || true
+    allow_port_via_iptables_cmd ip6tables "${port}" || true
+
+    if [[ ${panel_opened} -eq 1 ]]; then
+        green "已通过 iptables 增量放行面板端口 ${port}/tcp"
+        if [[ "${ssh_port}" != "${port}" && ${ssh_opened} -eq 1 ]]; then
+            green "已通过 iptables 保留 SSH 端口 ${ssh_port}/tcp"
+        fi
+        if ! persist_iptables_rules; then
+            yellow "iptables 规则已临时生效，但未检测到持久化工具，重启后可能失效。"
         fi
         return 0
     fi
@@ -409,13 +379,17 @@ allow_port_in_firewall() {
         fi
     fi
 
-    if allow_port_via_ufw "${port}"; then
+	if [[ ${opened} -eq 0 ]] && allow_port_via_ufw "${port}"; then
+		opened=1
+	fi
+
+    if [[ ${opened} -eq 0 ]] && allow_port_via_iptables "${port}"; then
         opened=1
     fi
 
-    if [[ ${opened} -eq 0 ]]; then
-        yellow "未检测到可用的 firewalld/UFW，已跳过自动放行面板端口。"
-    fi
+	if [[ ${opened} -eq 0 ]]; then
+		yellow "未检测到可用的 firewalld/UFW/iptables，已跳过自动放行面板端口。"
+	fi
 }
 
 sync_management_script() {
