@@ -118,6 +118,60 @@ check_os_version() {
     fi
 }
 
+get_system_pretty_name() {
+    if [[ -f /etc/os-release ]]; then
+        awk -F= '/^PRETTY_NAME=/{gsub(/"/, "", $2); print $2}' /etc/os-release
+    else
+        uname -s
+    fi
+}
+
+get_kernel_version() {
+    uname -r | cut -d "-" -f 1
+}
+
+get_cpu_arch() {
+    uname -m
+}
+
+get_virtualization_type() {
+    local virt=""
+    virt=$(systemd-detect-virt 2>/dev/null)
+    if [[ -z "${virt}" || "${virt}" == "none" ]]; then
+        virt=$(virt-what 2>/dev/null | head -n 1)
+    fi
+    [[ -z "${virt}" ]] && virt="物理机/未知"
+    echo "${virt}"
+}
+
+get_bbr_algo() {
+    local algo=""
+    algo=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+    if [[ -n "${algo}" ]]; then
+        echo "${algo}"
+    elif ping -c 1 -W 1 10.0.0.2 >/dev/null 2>&1; then
+        echo "OpenVZ版bbr-plus"
+    else
+        echo "未知/OpenVZ-LXC"
+    fi
+}
+
+show_system_summary() {
+    local pretty_name=""
+    local kernel_version=""
+    local cpu_arch=""
+    local virt_type=""
+    local bbr_algo=""
+
+    pretty_name="$(get_system_pretty_name)"
+    kernel_version="$(get_kernel_version)"
+    cpu_arch="$(get_cpu_arch)"
+    virt_type="$(get_virtualization_type)"
+    bbr_algo="$(get_bbr_algo)"
+
+    echo -e "系统：${blue}${pretty_name}${plain}  内核：${blue}${kernel_version}${plain}  架构：${blue}${cpu_arch}${plain}  虚拟化：${blue}${virt_type}${plain}  BBR：${blue}${bbr_algo}${plain}"
+}
+
 install_base() {
     yellow "开始安装必要依赖..."
     if [[ "${release}" == "centos" ]]; then
@@ -871,6 +925,8 @@ show_finish_message() {
 
     echo
     green "sx-ui 安装完成，面板已启动。"
+    echo "----------------------------------------------"
+    show_system_summary
     echo "----------------------------------------------"
     if check_panel_runtime_status; then
         echo -e "面板状态：${green}已运行${plain}"
