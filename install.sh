@@ -265,11 +265,105 @@ port_in_use() {
     ss -lntup 2>/dev/null | awk 'NR>1 {print $5}' | grep -Eq "[:.]${port}$"
 }
 
-current_ssh_port() {
+is_valid_tcp_port() {
+    local port="$1"
+    [[ "${port}" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 ))
+}
+
+detect_current_session_ssh_port() {
     local port=""
-    port=$(awk '/^[[:space:]]*Port[[:space:]]+[0-9]+/{print $2}' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | tail -n 1)
-    [[ -z "${port}" ]] && port="22"
-    echo "${port}"
+
+    if [[ -n "${SSH_CONNECTION:-}" ]]; then
+        port=$(awk '{print $4}' <<< "${SSH_CONNECTION}")
+        if is_valid_tcp_port "${port}"; then
+            echo "${port}"
+            return 0
+        fi
+    fi
+
+    if [[ -n "${SSH_CLIENT:-}" ]]; then
+        port=$(awk '{print $3}' <<< "${SSH_CLIENT}")
+        if is_valid_tcp_port "${port}"; then
+            echo "${port}"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+detect_listening_ssh_port() {
+    local ports=""
+    local port=""
+
+    if command -v ss >/dev/null 2>&1; then
+        ports=$(ss -lntp 2>/dev/null | awk '
+            NR > 1 && $0 ~ /(sshd|ssh\.socket)/ {
+                listen = $4
+                sub(/^.*:/, "", listen)
+                gsub(/[\[\]]/, "", listen)
+                if (listen ~ /^[0-9]+$/) print listen
+            }
+        ' | sort -n -u)
+    elif command -v netstat >/dev/null 2>&1; then
+        ports=$(netstat -lntp 2>/dev/null | awk '
+            NR > 2 && $0 ~ /(sshd|ssh\.socket)/ {
+                listen = $4
+                sub(/^.*:/, "", listen)
+                gsub(/[\[\]]/, "", listen)
+                if (listen ~ /^[0-9]+$/) print listen
+            }
+        ' | sort -n -u)
+    fi
+
+    for port in ${ports}; do
+        if is_valid_tcp_port "${port}" && [[ "${port}" != "22" ]]; then
+            echo "${port}"
+            return 0
+        fi
+    done
+
+    for port in ${ports}; do
+        if is_valid_tcp_port "${port}"; then
+            echo "${port}"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+detect_effective_sshd_port() {
+    local port=""
+
+    command -v sshd >/dev/null 2>&1 || return 1
+    port=$(sshd -T 2>/dev/null | awk '/^port[[:space:]]+[0-9]+/{print $2; exit}')
+    if is_valid_tcp_port "${port}"; then
+        echo "${port}"
+        return 0
+    fi
+
+    return 1
+}
+
+detect_configured_ssh_port() {
+    local port=""
+
+    port=$(awk 'tolower($1) == "port" && $2 ~ /^[0-9]+$/ {print $2}' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | tail -n 1)
+    if is_valid_tcp_port "${port}"; then
+        echo "${port}"
+        return 0
+    fi
+
+    return 1
+}
+
+current_ssh_port() {
+    detect_current_session_ssh_port \
+        || detect_listening_ssh_port \
+        || detect_effective_sshd_port \
+        || detect_configured_ssh_port \
+        || echo "22"
 }
 
 allow_port_via_ufw() {
@@ -595,6 +689,21 @@ panel_has_https() {
     [[ ${panel_cert_enabled} -eq 1 ]]
 }
 
+allow_panel_port_when_safe() {
+    if panel_has_https; then
+        allow_port_in_firewall "${panel_port}"
+        return 0
+    fi
+
+    if panel_has_reverse_proxy; then
+        yellow "已启用 Nginx 反代，跳过自动放行面板直连端口 ${panel_port}。"
+        return 0
+    fi
+
+    yellow "未配置 HTTPS 证书，已跳过自动放行面板端口 ${panel_port}。"
+    yellow "请使用下方 SSH 隧道访问；如确需公网直连，可安装后在管理脚本里手动选择“放行面板端口”。"
+}
+
 show_ssh_tunnel_info() {
     local ipv4="$1"
     local ipv6="$2"
@@ -610,6 +719,7 @@ show_ssh_tunnel_info() {
     echo "----------------------------------------------"
     yellow "当前未配置 HTTPS 证书，也未启用 Nginx 反代。"
     yellow "建议先通过 SSH 本地隧道安全访问面板，再进入“证书管理”为面板配置 HTTPS。"
+    echo -e "自动识别 SSH 端口：${blue}${ssh_port}${plain}"
     echo -e "本地访问链接：${blue}${local_link}${plain}"
     if [[ -n "${ipv4}" ]]; then
         echo -e "SSH 隧道命令（IPv4）：${blue}ssh -L ${local_port}:127.0.0.1:${panel_port} -p ${ssh_port} root@${ipv4}${plain}"
@@ -871,13 +981,13 @@ configure_after_install() {
     yellow "开始保存面板基础设置..."
     if apply_panel_basic_settings; then
         green "面板基础设置保存完成。"
-        allow_port_in_firewall "${panel_port}"
     else
         red "面板基础设置保存失败。"
         exit 1
     fi
 
     configure_certificate_after_install
+    allow_panel_port_when_safe
 }
 
 show_finish_message() {
@@ -955,13 +1065,15 @@ show_finish_message() {
     else
         echo -e "证书状态：${yellow}未配置，当前将使用 HTTP${plain}"
     fi
-    if ! panel_has_reverse_proxy; then
+    if ! panel_has_reverse_proxy && panel_has_https; then
         if [[ -n "${ipv4}" ]]; then
             echo -e "登录地址：${blue}${protocol}://${ipv4}:${panel_port}${path_display}${plain}"
         fi
         if [[ -n "${ipv6}" ]]; then
             echo -e "登录地址：${blue}${protocol}://[${ipv6}]:${panel_port}${path_display}${plain}"
         fi
+    elif ! panel_has_https && ! panel_has_reverse_proxy; then
+        yellow "公网直连地址未展示：当前未配置 HTTPS，安装脚本不会自动放行面板端口。"
     fi
     if ! panel_has_https && ! panel_has_reverse_proxy; then
         show_ssh_tunnel_info "${ipv4}" "${ipv6}" "${path_display}"

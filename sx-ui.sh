@@ -225,11 +225,105 @@ port_in_use() {
     ss -lntup 2>/dev/null | awk 'NR>1 {print $5}' | grep -Eq "[:.]${port}$"
 }
 
-current_ssh_port() {
+is_valid_tcp_port() {
+    local port="$1"
+    [[ "${port}" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 ))
+}
+
+detect_current_session_ssh_port() {
     local port=""
-    port=$(awk '/^[[:space:]]*Port[[:space:]]+[0-9]+/{print $2}' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | tail -n 1)
-    [[ -z "${port}" ]] && port="22"
-    echo "${port}"
+
+    if [[ -n "${SSH_CONNECTION:-}" ]]; then
+        port=$(awk '{print $4}' <<< "${SSH_CONNECTION}")
+        if is_valid_tcp_port "${port}"; then
+            echo "${port}"
+            return 0
+        fi
+    fi
+
+    if [[ -n "${SSH_CLIENT:-}" ]]; then
+        port=$(awk '{print $3}' <<< "${SSH_CLIENT}")
+        if is_valid_tcp_port "${port}"; then
+            echo "${port}"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+detect_listening_ssh_port() {
+    local ports=""
+    local port=""
+
+    if command -v ss >/dev/null 2>&1; then
+        ports=$(ss -lntp 2>/dev/null | awk '
+            NR > 1 && $0 ~ /(sshd|ssh\.socket)/ {
+                listen = $4
+                sub(/^.*:/, "", listen)
+                gsub(/[\[\]]/, "", listen)
+                if (listen ~ /^[0-9]+$/) print listen
+            }
+        ' | sort -n -u)
+    elif command -v netstat >/dev/null 2>&1; then
+        ports=$(netstat -lntp 2>/dev/null | awk '
+            NR > 2 && $0 ~ /(sshd|ssh\.socket)/ {
+                listen = $4
+                sub(/^.*:/, "", listen)
+                gsub(/[\[\]]/, "", listen)
+                if (listen ~ /^[0-9]+$/) print listen
+            }
+        ' | sort -n -u)
+    fi
+
+    for port in ${ports}; do
+        if is_valid_tcp_port "${port}" && [[ "${port}" != "22" ]]; then
+            echo "${port}"
+            return 0
+        fi
+    done
+
+    for port in ${ports}; do
+        if is_valid_tcp_port "${port}"; then
+            echo "${port}"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+detect_effective_sshd_port() {
+    local port=""
+
+    command -v sshd >/dev/null 2>&1 || return 1
+    port=$(sshd -T 2>/dev/null | awk '/^port[[:space:]]+[0-9]+/{print $2; exit}')
+    if is_valid_tcp_port "${port}"; then
+        echo "${port}"
+        return 0
+    fi
+
+    return 1
+}
+
+detect_configured_ssh_port() {
+    local port=""
+
+    port=$(awk 'tolower($1) == "port" && $2 ~ /^[0-9]+$/ {print $2}' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | tail -n 1)
+    if is_valid_tcp_port "${port}"; then
+        echo "${port}"
+        return 0
+    fi
+
+    return 1
+}
+
+current_ssh_port() {
+    detect_current_session_ssh_port \
+        || detect_listening_ssh_port \
+        || detect_effective_sshd_port \
+        || detect_configured_ssh_port \
+        || echo "22"
 }
 
 allow_port_via_ufw() {
@@ -492,6 +586,7 @@ show_ssh_tunnel_info() {
     local_link="http://127.0.0.1:${local_port}${current_base_path}"
 
     echo -e "SSH 隧道访问: ${yellow}当前未配置 HTTPS 证书，也未启用 Nginx 反代，建议先通过 SSH 隧道安全访问${plain}"
+    echo -e "自动识别 SSH 端口: ${blue}${ssh_port}${plain}"
     echo -e "本地访问链接: ${blue}${local_link}${plain}"
     if [[ -n "${ipv4}" ]]; then
         echo -e "SSH 隧道命令（IPv4）: ${blue}ssh -L ${local_port}:127.0.0.1:${current_port} -p ${ssh_port} root@${ipv4}${plain}"
