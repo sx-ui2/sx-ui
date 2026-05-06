@@ -653,6 +653,8 @@ get_local_ipv6() {
 load_current_panel_settings() {
     local setting_dump=""
     setting_dump=$(/usr/local/sx-ui/sx-ui setting -show true 2>/dev/null)
+    panel_cert_enabled=0
+    panel_cert_host=""
     panel_username=$(echo "${setting_dump}" | awk -F': ' '$1=="username"{print $2}')
     panel_password=$(echo "${setting_dump}" | awk -F': ' '$1=="userpasswd"{print $2}')
     panel_port=$(echo "${setting_dump}" | awk -F': ' '$1=="port"{print $2}')
@@ -667,7 +669,7 @@ load_current_panel_settings() {
     [[ -z "${panel_base_path}" ]] && panel_base_path="/"
     [[ -z "${panel_nginx_proxy_enabled}" ]] && panel_nginx_proxy_enabled="false"
     [[ -z "${panel_nginx_proxy_https}" ]] && panel_nginx_proxy_https="false"
-    if [[ -n "${cert_file}" && -n "${key_file}" ]]; then
+    if [[ -n "${cert_file}" && -n "${key_file}" && -f "${cert_file}" && -f "${key_file}" ]]; then
         panel_cert_enabled=1
         panel_cert_host="$(extract_certificate_primary_host "${cert_file}")"
     fi
@@ -758,6 +760,8 @@ extract_certificate_primary_host() {
 }
 
 warn_insecure_http() {
+    panel_cert_enabled=0
+    panel_cert_host=""
     red "警告：面板将以不安全的 HTTP 方式运行。"
     yellow "建议安装完成后尽快进入“证书管理”为面板配置 HTTPS 证书。"
 }
@@ -987,6 +991,7 @@ configure_after_install() {
     fi
 
     configure_certificate_after_install
+    load_current_panel_settings
     allow_panel_port_when_safe
 }
 
