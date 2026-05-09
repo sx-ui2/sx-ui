@@ -486,6 +486,44 @@ allow_port_in_firewall() {
 	fi
 }
 
+enable_firewall_for_first_install() {
+    local ssh_port=""
+
+    ssh_port="$(current_ssh_port)"
+
+    if command -v firewall-cmd >/dev/null 2>&1; then
+        if systemctl is-active --quiet firewalld 2>/dev/null; then
+            return 0
+        fi
+        if command -v firewall-offline-cmd >/dev/null 2>&1; then
+            firewall-offline-cmd --add-service=ssh >/dev/null 2>&1 || true
+            firewall-offline-cmd --add-port="${ssh_port}/tcp" >/dev/null 2>&1 || true
+        fi
+        systemctl enable firewalld >/dev/null 2>&1 || true
+        if systemctl start firewalld >/dev/null 2>&1; then
+            firewall-cmd --permanent --add-service=ssh >/dev/null 2>&1 || true
+            firewall-cmd --permanent --add-port="${ssh_port}/tcp" >/dev/null 2>&1 || true
+            firewall-cmd --reload >/dev/null 2>&1 || true
+            green "已启用 firewalld，并保留 SSH 端口 ${ssh_port}/tcp"
+            return 0
+        fi
+    fi
+
+    if command -v ufw >/dev/null 2>&1; then
+        if ufw status 2>/dev/null | grep -q "^Status: active"; then
+            return 0
+        fi
+        ufw allow "${ssh_port}/tcp" >/dev/null 2>&1 || true
+        if ufw --force enable >/dev/null 2>&1; then
+            green "已启用 UFW，并保留 SSH 端口 ${ssh_port}/tcp"
+            return 0
+        fi
+    fi
+
+    yellow "未检测到可启用的 firewalld/UFW，已跳过自动启用防火墙。"
+    return 1
+}
+
 sync_management_script() {
     local bundled_script="/usr/local/sx-ui/sx-ui.sh"
 
@@ -692,6 +730,8 @@ panel_has_https() {
 }
 
 allow_panel_port_when_safe() {
+    enable_firewall_for_first_install || true
+
     if panel_has_https; then
         allow_port_in_firewall "${panel_port}"
         return 0
